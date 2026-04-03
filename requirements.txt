@@ -1,0 +1,23 @@
+# OCRAI-FertigungKalk – Python dependencies
+# Install with: pip install -r requirements.txt
+
+# Core image processing
+opencv-python>=4.8.0
+numpy>=1.24.0
+Pillow>=10.0.0
+
+# PDF processing
+pymupdf>=1.23.0          # provides the `fitz` module
+
+# OCR
+pytesseract>=0.3.10
+# NOTE: Tesseract binary must also be installed on the OS:
+#   Ubuntu/Debian: sudo apt-get install tesseract-ocr tesseract-ocr-deu
+#   macOS:         brew install tesseract tesseract-lang
+#   Windows:       https://github.com/UB-Mannheim/tesseract/wiki
+
+# LLM (Anthropic Claude)
+anthropic>=0.25.0
+
+# Utility
+scipy>=1.11.0            # optional: used for advanced clustering if needed

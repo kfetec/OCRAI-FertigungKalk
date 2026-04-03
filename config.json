@@ -1,0 +1,78 @@
+{
+  "pdf_render_dpi": 300,
+  "image_downscale_factor": 0.5,
+
+  "preprocessing": {
+    "gaussian_blur_kernel": 3,
+    "canny_threshold_low": 50,
+    "canny_threshold_high": 150,
+    "adaptive_block_size": 15,
+    "adaptive_c": 10
+  },
+
+  "hough_lines": {
+    "rho": 1,
+    "theta_deg": 1,
+    "threshold": 80,
+    "min_line_length": 30,
+    "max_line_gap": 10,
+    "merge_distance_px": 5,
+    "merge_angle_deg": 2.0,
+    "min_length_mm": 10
+  },
+
+  "hough_circles": {
+    "dp": 1.2,
+    "min_dist_px": 20,
+    "param1": 50,
+    "param2": 30,
+    "min_radius_px": 3,
+    "max_radius_px": 200
+  },
+
+  "ocr": {
+    "tesseract_lang": "deu+eng",
+    "tesseract_config": "--psm 11",
+    "contrast_alpha": 1.5,
+    "contrast_beta": 20
+  },
+
+  "scale_detection": {
+    "dimension_patterns": [
+      "\\b(\\d+(?:[.,]\\d+)?)\\s*mm\\b",
+      "\\b(\\d+(?:[.,]\\d+)?)\\s*cm\\b",
+      "\\b(\\d+(?:[.,]\\d+)?)\\s*m\\b"
+    ],
+    "dim_line_search_radius_px": 50
+  },
+
+  "llm": {
+    "model": "claude-sonnet-4-6",
+    "max_tokens": 1024,
+    "temperature": 0,
+    "cache_enabled": true,
+    "cache_dir": ".llm_cache"
+  },
+
+  "classification": {
+    "weld_proximity_px": 80,
+    "min_weld_length_mm": 5,
+    "cluster_gap_mm": 20
+  },
+
+  "calculation": {
+    "weld_time_per_mm": 0.02,
+    "drill_time_per_hole": 30,
+    "setup_time_min": 15,
+    "overhead_factor": 1.1
+  },
+
+  "debug": {
+    "enabled": true,
+    "output_dir": "debug",
+    "line_color": [0, 255, 0],
+    "circle_color": [255, 0, 0],
+    "ocr_color": [0, 0, 255],
+    "line_thickness": 2
+  }
+}
