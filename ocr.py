@@ -92,8 +92,12 @@ def extract_text(page: PageData, pre: PreprocessResult, cfg: dict) -> OcrResult:
 
     if page.source_type == "pdf_vector" and page.pdf_text.strip():
         raw_text = page.pdf_text
-        regions: list[dict] = []
-        logger.debug("Page %d: using embedded PDF text (%d chars)", page.page_index, len(raw_text))
+        # Use word-level bboxes extracted from the PDF (populated in input_loader)
+        regions: list[dict] = list(page.pdf_words)
+        logger.debug(
+            "Page %d: using embedded PDF text (%d chars, %d word regions)",
+            page.page_index, len(raw_text), len(regions),
+        )
     else:
         raw_text, regions = _run_tesseract(pre.gray, ocr_cfg, page.image)
         logger.debug("Page %d: OCR extracted %d chars", page.page_index, len(raw_text))

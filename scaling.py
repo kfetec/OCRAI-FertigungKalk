@@ -3,15 +3,15 @@ scaling.py  ⚠️ CRITICAL
 -----------
 Compute the scale factor (mm per pixel) for a drawing page.
 
-Algorithm:
-  1. Search OCR text for dimension annotations ("NNN mm", "NNN cm", …)
-  2. For each found dimension, look for a dimension line near the text bbox
-     in the edge map or line list
-  3. Compute scale_mm_per_pixel = real_length_mm / pixel_length
-  4. Use median of all found scales for robustness
+Strategy (in order of priority):
+  1. Explicit scale ratio in text ("1:1", "1:2", "1:5", "2:1", …)
+     Combined with PDF rendering DPI → exact mm/px
+  2. Dimension annotation with unit suffix ("100 mm", "50 cm") near a
+     detected dimension line → ratio from real_mm / pixel_length
+  3. Pure-number dimension + matching vector line (for drawings without
+     explicit "mm" unit labels)
 
-Fallback: if no scale can be determined, return None (downstream code must
-handle this gracefully by working in pixels or skipping mm output).
+Fallback: None (downstream code works in pixels or omits mm output).
 """
 
 from __future__ import annotations
@@ -29,15 +29,29 @@ from ocr import OcrResult
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Regex: parse numeric value + unit from a dimension string
+# Regex patterns
 # ---------------------------------------------------------------------------
 
-_DIM_PARSE_RE = re.compile(
+# "1:2", "1 : 2", "M 1:50", "MASSTAB 1:5"
+_RATIO_RE = re.compile(
+    r"(?:ma[sß]{1,2}stab|massstab|scale|m)?\s*"
+    r"(\d+(?:[.,]\d+)?)\s*:\s*(\d+(?:[.,]\d+)?)",
+    re.IGNORECASE,
+)
+
+# "100 mm", "50cm", "1.5m"
+_DIM_UNIT_RE = re.compile(
     r"(\d+(?:[.,]\d+)?)\s*(mm|cm|m)\b",
     re.IGNORECASE,
 )
 
+# Pure numbers that look like dimensions (e.g. "178", "45") – used as fallback
+_DIM_NUMBER_RE = re.compile(r"\b(\d{1,5}(?:[.,]\d{1,2})?)\b")
+
 _MM_PER_UNIT = {"mm": 1.0, "cm": 10.0, "m": 1000.0}
+
+# 1 PDF point = 25.4/72 mm
+_MM_PER_PT = 25.4 / 72.0
 
 
 # ---------------------------------------------------------------------------
@@ -49,16 +63,20 @@ def compute_scale(
     lines: list[dict],
     edges: np.ndarray,
     cfg: dict,
+    source_type: str = "pdf_vector",
+    pdf_render_dpi: int = 300,
 ) -> Optional[float]:
     """
     Compute scale_mm_per_pixel.
 
     Parameters
     ----------
-    ocr   : OcrResult  containing regions with bbox info
-    lines : list[dict] detected line segments (pixel coords)
-    edges : np.ndarray Canny edge image (full-res)
-    cfg   : dict       top-level config
+    ocr              : OcrResult with regions (word bboxes) and raw_text
+    lines            : detected line segments in pixel coords
+    edges            : Canny edge image (full-res)
+    cfg              : top-level config
+    source_type      : "pdf_vector", "pdf_raster", or "tiff"
+    pdf_render_dpi   : DPI used to render the PDF (needed for DPI-based scale)
 
     Returns
     -------
@@ -67,53 +85,44 @@ def compute_scale(
     scfg = cfg.get("scale_detection", {})
     search_radius = float(scfg.get("dim_line_search_radius_px", 50))
 
-    scales: list[float] = []
+    # ── Strategy 1: explicit scale ratio in text ────────────────────────────
+    if source_type in ("pdf_vector", "pdf_raster"):
+        scale = _scale_from_ratio(ocr.raw_text, pdf_render_dpi)
+        if scale is not None:
+            logger.info("Scale from ratio notation: %.5f mm/px", scale)
+            return scale
 
+    # ── Strategy 2: dimension with unit + dimension line ────────────────────
+    scales: list[float] = []
     for region in ocr.regions:
         text = region.get("text", "")
-        m = _DIM_PARSE_RE.search(text)
+        m = _DIM_UNIT_RE.search(text)
         if not m:
             continue
-
-        value_str = m.group(1).replace(",", ".")
-        unit = m.group(2).lower()
-        real_mm = float(value_str) * _MM_PER_UNIT.get(unit, 1.0)
-
+        real_mm = float(m.group(1).replace(",", ".")) * _MM_PER_UNIT[m.group(2).lower()]
         if real_mm <= 0:
             continue
+        cx = region["x"] + region["w"] / 2
+        cy = region["y"] + region["h"] / 2
+        px_len = _find_dimension_line_near(cx, cy, lines, edges, search_radius)
+        if px_len and px_len >= 5:
+            scales.append(real_mm / px_len)
+            logger.debug("Scale candidate from '%s': %.4f mm/px", text, real_mm / px_len)
 
-        # Bounding box of this text region
-        rx, ry, rw, rh = region["x"], region["y"], region["w"], region["h"]
-        cx_text = rx + rw / 2
-        cy_text = ry + rh / 2
+    if scales:
+        result = float(np.median(scales))
+        logger.info("Scale from dimension annotations: %.5f mm/px", result)
+        return result
 
-        # Find dimension line near this text region
-        px_len = _find_dimension_line_near(
-            cx_text, cy_text,
-            lines, edges,
-            search_radius,
-        )
-        if px_len is None or px_len < 5:
-            continue
+    # ── Strategy 3: pure-number dimensions matched to vector lines ──────────
+    if source_type == "pdf_vector" and lines:
+        scale = _scale_from_pure_numbers(ocr, lines)
+        if scale is not None:
+            logger.info("Scale from pure-number heuristic: %.5f mm/px", scale)
+            return scale
 
-        scale = real_mm / px_len
-        scales.append(scale)
-        logger.debug(
-            "Scale candidate from '%s': %.2f mm / %d px = %.4f mm/px",
-            text.strip(), real_mm, px_len, scale,
-        )
-
-    if not scales:
-        # Try dimension strings without bounding boxes (e.g. from vector PDF text)
-        scales = _scale_from_raw_text(ocr.dimensions, lines, edges, search_radius)
-
-    if not scales:
-        logger.warning("Could not determine scale – working in pixels")
-        return None
-
-    result = float(np.median(scales))
-    logger.info("Scale determined: %.5f mm/px (from %d sample(s))", result, len(scales))
-    return result
+    logger.warning("Could not determine scale – working in pixels")
+    return None
 
 
 def apply_scale(value_px: float, scale: Optional[float]) -> Optional[float]:
@@ -124,25 +133,118 @@ def apply_scale(value_px: float, scale: Optional[float]) -> Optional[float]:
 
 
 # ---------------------------------------------------------------------------
-# Internal helpers
+# Strategy 1: ratio from text
+# ---------------------------------------------------------------------------
+
+def _scale_from_ratio(text: str, dpi: int) -> Optional[float]:
+    """
+    Look for "1:2", "Maßstab 1:5" etc. in the text.
+    Returns mm/px = (drawing_units / real_units) × (25.4 / dpi)
+    e.g. "1:1" at 300 DPI → 1 × (25.4/300) = 0.08467 mm/px
+         "1:2" at 300 DPI → 2 × (25.4/300) = 0.16933 mm/px
+    """
+    px_per_inch = float(dpi)
+    mm_per_px = 25.4 / px_per_inch
+
+    for m in _RATIO_RE.finditer(text):
+        a = float(m.group(1).replace(",", "."))
+        b = float(m.group(2).replace(",", "."))
+        if a <= 0 or b <= 0:
+            continue
+        # Drawing scale A:B means 1 drawing unit = (B/A) real units
+        # At "1:1": 1mm on paper = 1mm real → mm_per_px = 25.4/dpi
+        # At "1:2": 1mm on paper = 2mm real → mm_per_px = 2 × 25.4/dpi
+        real_factor = b / a
+        # Sanity: typical drawing scales 1:1 to 1:100 (real_factor 0.01–100)
+        if 0.01 <= real_factor <= 100.0:
+            candidate = mm_per_px * real_factor
+            logger.debug(
+                "Ratio '%s:%s' → real_factor=%.3f → %.5f mm/px",
+                m.group(1), m.group(2), real_factor, candidate,
+            )
+            return candidate
+
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Strategy 3: pure-number heuristic for vector PDFs
+# ---------------------------------------------------------------------------
+
+def _scale_from_pure_numbers(ocr: OcrResult, lines: list[dict]) -> Optional[float]:
+    """
+    For vector PDFs without explicit unit labels:
+    Match labeled dimension numbers to nearby line lengths (in pixels).
+
+    Uses only regions that contain standalone numbers (e.g. "45", "178").
+    Skips numbers that look like angles (°), radii (R prefix), or tolerances.
+    """
+    # Collect numeric regions (word bbox + value)
+    candidates: list[tuple[float, float, float, float]] = []  # (real_mm, cx, cy, conf)
+
+    for region in ocr.regions:
+        text = region.get("text", "").strip()
+        # Skip if it contains non-numeric chars besides comma/dot
+        if re.search(r"[°RrMm]", text):
+            continue
+        m = re.fullmatch(r"(\d{1,5}(?:[.,]\d{1,2})?)", text)
+        if not m:
+            continue
+        value = float(m.group(1).replace(",", "."))
+        # Typical engineering dimensions: 5–5000 mm
+        if not (5 <= value <= 5000):
+            continue
+        cx = region["x"] + region["w"] / 2
+        cy = region["y"] + region["h"] / 2
+        candidates.append((value, cx, cy))
+
+    if not candidates:
+        return None
+
+    # For each candidate, find the closest line and compute scale
+    search_radius = 80.0
+    scales: list[float] = []
+
+    for real_mm, cx, cy in candidates:
+        px_len = _find_dimension_line_near(cx, cy, lines, None, search_radius)
+        if px_len and px_len >= 5:
+            s = real_mm / px_len
+            # Sanity: typical drawing renders → 0.01–2 mm/px
+            if 0.01 <= s <= 2.0:
+                scales.append(s)
+
+    if not scales:
+        return None
+
+    # Use median; require at least 2 consistent samples
+    if len(scales) < 2:
+        return None
+
+    result = float(np.median(scales))
+    # Reject if spread is too large (inconsistent matches)
+    spread = max(scales) / max(min(scales), 1e-9)
+    if spread > 3.0:
+        logger.debug("Pure-number scale candidates too spread (%.1fx), discarding", spread)
+        return None
+
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Shared helper: find dimension line near text
 # ---------------------------------------------------------------------------
 
 def _find_dimension_line_near(
     cx: float,
     cy: float,
     lines: list[dict],
-    edges: np.ndarray,
+    edges,
     radius: float,
 ) -> Optional[float]:
-    """
-    Return the length (pixels) of the closest horizontal/vertical line
-    near the given text centre point.
-
-    First tries the extracted line list; falls back to edge-image scan.
-    """
-    # 1. Try extracted lines
+    """Return length (px) of the closest line segment near the given point."""
     best_dist = radius
     best_len: Optional[float] = None
+
     for seg in lines:
         mx = (seg["x0"] + seg["x1"]) / 2
         my = (seg["y0"] + seg["y1"]) / 2
@@ -154,7 +256,7 @@ def _find_dimension_line_near(
     if best_len is not None:
         return best_len
 
-    # 2. Fallback: scan edge image in a bounding strip
+    # Fallback: scan edge image strip
     if edges is None:
         return None
 
@@ -163,12 +265,10 @@ def _find_dimension_line_near(
     x1 = min(w, int(cx + radius))
     y0 = max(0, int(cy - radius))
     y1 = min(h, int(cy + radius))
-
     strip = edges[y0:y1, x0:x1]
     if strip.size == 0:
         return None
 
-    # Run HoughLinesP on the strip
     local_lines = cv2.HoughLinesP(strip, 1, math.pi / 180, 20, minLineLength=10, maxLineGap=5)
     if local_lines is None:
         return None
@@ -181,44 +281,3 @@ def _find_dimension_line_near(
             best = length
 
     return best
-
-
-def _scale_from_raw_text(
-    dimension_strings: list[str],
-    lines: list[dict],
-    edges: np.ndarray,
-    radius: float,
-) -> list[float]:
-    """
-    When we have dimension strings but no bbox info (vector PDF), try to
-    match against the longest lines heuristically.
-    """
-    if not dimension_strings or not lines:
-        return []
-
-    # Sort lines by length descending
-    sorted_lines = sorted(lines, key=lambda s: s["length_px"], reverse=True)
-    top_lines = sorted_lines[:min(10, len(sorted_lines))]
-
-    scales: list[float] = []
-    for dim_str in dimension_strings:
-        m = _DIM_PARSE_RE.search(dim_str)
-        if not m:
-            continue
-        value_str = m.group(1).replace(",", ".")
-        unit = m.group(2).lower()
-        real_mm = float(value_str) * _MM_PER_UNIT.get(unit, 1.0)
-        if real_mm <= 0:
-            continue
-
-        for seg in top_lines:
-            px_len = seg["length_px"]
-            if px_len < 10:
-                continue
-            candidate = real_mm / px_len
-            # Sanity: typical drawing scales 1:1 to 1:100 → 0.01 – 10 mm/px
-            if 0.005 <= candidate <= 50.0:
-                scales.append(candidate)
-                break
-
-    return scales

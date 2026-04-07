@@ -96,8 +96,19 @@ def classify_welds(
     # Filter by minimum length
     candidates = [seg for seg in lines if seg["length_px"] >= min_px]
 
-    # Optionally filter by proximity to weld annotation regions
+    # Check for weld-related text anywhere in the drawing
+    has_weld_text = bool(ocr.weld_annotations) or bool(llm_result.get("weld_type"))
     weld_regions = [r for r in ocr.regions if _text_is_weld_annotation(r["text"])]
+
+    if not has_weld_text and not weld_regions:
+        # No weld annotations at all → this drawing has no welds
+        logger.info("No weld annotations detected – weld count set to 0")
+        return WeldClassification(
+            segments=[],
+            total_length_px=0.0,
+            total_length_mm=0.0,
+            cluster_count=0,
+        )
 
     if weld_regions:
         candidates = _filter_by_proximity(candidates, weld_regions, proximity_px)
@@ -107,7 +118,7 @@ def classify_welds(
         )
     else:
         logger.debug(
-            "No weld annotation regions found; keeping all %d length-filtered lines",
+            "Weld text found but no positioned regions; keeping all %d length-filtered lines",
             len(candidates),
         )
 
@@ -165,16 +176,27 @@ def classify_holes(
     llm_count: Optional[int] = llm_result.get("hole_count")
     llm_diameters: Optional[list[float]] = llm_result.get("hole_diameters")
 
-    # ---- CV-detected holes ----
+    # ---- CV-detected holes (with minimum-radius filter) ----
+    # Minimum radius: 3 mm real-world size.  Filters out annotation arcs,
+    # radius indicators, and other small geometry noise.
+    ccfg = cfg.get("classification", {})
+    min_hole_diam_mm = float(ccfg.get("min_hole_diameter_mm", 3.0))
+
     cv_holes: list[HoleInfo] = []
+    skipped = 0
     for c in circles:
         d_mm = apply_scale(c["diameter_px"], scale_mm_per_px)
+        if d_mm is not None and d_mm < min_hole_diam_mm:
+            skipped += 1
+            continue
         cv_holes.append(HoleInfo(
             cx=c["cx"], cy=c["cy"],
             radius_px=c["radius_px"],
             diameter_px=c["diameter_px"],
             diameter_mm=round(d_mm, 2) if d_mm is not None else None,
         ))
+    if skipped:
+        logger.debug("Holes: skipped %d circles below min diameter %.1f mm", skipped, min_hole_diam_mm)
 
     # Determine final count
     final_count = llm_count if llm_count is not None else len(cv_holes)

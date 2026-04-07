@@ -83,7 +83,11 @@ def run(input_file: str, cfg: dict) -> dict:
         ocr_result = ocr_module.extract_text(page, pre, cfg)
 
         # 5. Scale detection
-        scale_mm_per_px = scaling.compute_scale(ocr_result, lines, pre.edges, cfg)
+        scale_mm_per_px = scaling.compute_scale(
+            ocr_result, lines, pre.edges, cfg,
+            source_type=page.source_type,
+            pdf_render_dpi=cfg.get("pdf_render_dpi", 300),
+        )
 
         # Collect annotations for LLM
         all_hole_annotations.extend(ocr_result.hole_annotations)

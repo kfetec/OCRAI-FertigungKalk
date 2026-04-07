@@ -1,6 +1,7 @@
 {
   "pdf_render_dpi": 300,
   "image_downscale_factor": 0.5,
+  "min_circle_radius_pt": 2.0,
 
   "preprocessing": {
     "gaussian_blur_kernel": 3,
@@ -58,7 +59,8 @@
   "classification": {
     "weld_proximity_px": 80,
     "min_weld_length_mm": 5,
-    "cluster_gap_mm": 20
+    "cluster_gap_mm": 20,
+    "min_hole_diameter_mm": 3.0
   },
 
   "calculation": {
