@@ -51,6 +51,7 @@
   "llm": {
     "model": "claude-sonnet-4-6",
     "max_tokens": 1024,
+    "max_tokens_vision": 2048,
     "temperature": 0,
     "cache_enabled": true,
     "cache_dir": ".llm_cache"

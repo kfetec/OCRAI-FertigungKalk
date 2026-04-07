@@ -147,12 +147,31 @@ def print_summary(data: dict) -> None:
         "",
         "  ── Holes ──────────────────────────────────────────",
     ]
+    # Prefer the richer hole_detection block if available
+    hd = data.get("hole_detection", {})
     h = data.get("holes", {})
-    lines.append(f"  Count        : {h.get('count', 0)}")
-    diams = h.get("diameters_mm", [])
+
+    hole_count = hd.get("total_unique_holes", h.get("count", 0))
+    lines.append(f"  Count        : {hole_count}")
+
+    diams = hd.get("diameters_mm") or h.get("diameters_mm", [])
     if diams:
         diam_str = ", ".join(f"Ø{d}" for d in diams)
         lines.append(f"  Diameters    : {diam_str} mm")
+
+    threads = hd.get("thread_specs", [])
+    if threads:
+        lines.append(f"  Threads      : {', '.join(threads)}")
+
+    slots = hd.get("total_slots", 0)
+    if slots:
+        lines.append(f"  Slots        : {slots}")
+
+    # Confidence + source per page
+    for pg in hd.get("per_page", []):
+        conf = pg.get("confidence", 0)
+        src = pg.get("source", "?")
+        lines.append(f"  Page {pg.get('page', '?')} source  : {src}  (confidence {conf:.0%})")
 
     t = data.get("time", {})
     lines += [
