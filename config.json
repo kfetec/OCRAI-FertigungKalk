@@ -24,11 +24,11 @@
 
   "hough_circles": {
     "dp": 1.2,
-    "min_dist_px": 20,
-    "param1": 50,
-    "param2": 30,
-    "min_radius_px": 3,
-    "max_radius_px": 200
+    "min_dist_px": 40,
+    "param1": 100,
+    "param2": 70,
+    "min_radius_px": 15,
+    "max_radius_px": 300
   },
 
   "ocr": {

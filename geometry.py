@@ -53,24 +53,25 @@ def extract_geometry(
     lines   : list of LineSegment dicts (pixel coords, full-res)
     circles : list of CircleGeom dicts  (pixel coords, full-res)
     """
-    if page.source_type == "pdf_vector" and (page.vector_lines or page.vector_circles):
+    if page.source_type == "pdf_vector" and page.vector_lines:
+        # Lines: from vector paths (accurate, no noise)
         lines = _lines_from_vector(page, cfg)
-        circles = _circles_from_vector(page, cfg)
+        # Circles: ALWAYS use Hough on the rendered image.
+        # Vector Bezier analysis is unreliable across CAD exporters.
+        # Holes are primarily counted from OCR/LLM; Hough is a visual fallback.
+        _, circles = _detect_raster(pre, cfg)
         logger.info(
-            "Page %d: using vector geometry – %d lines, %d circles",
+            "Page %d: vector lines=%d, Hough circles=%d",
             page.page_index, len(lines), len(circles),
         )
-        # Supplement with Hough when vector data looks incomplete
         if len(lines) < 5:
-            logger.debug("Page %d: vector lines sparse, supplementing with Hough", page.page_index)
-            hough_lines, hough_circles = _detect_raster(pre, cfg)
+            logger.debug("Page %d: vector lines sparse, supplementing with Hough lines", page.page_index)
+            hough_lines, _ = _detect_raster(pre, cfg)
             lines = _merge_line_lists(lines, hough_lines, tol_px=10)
-            if not circles:
-                circles = hough_circles
     else:
         lines, circles = _detect_raster(pre, cfg)
         logger.info(
-            "Page %d: using raster geometry – %d lines, %d circles",
+            "Page %d: raster geometry – lines=%d, circles=%d",
             page.page_index, len(lines), len(circles),
         )
 
