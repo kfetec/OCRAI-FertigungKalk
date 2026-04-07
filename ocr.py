@@ -116,16 +116,22 @@ def _run_tesseract(gray: np.ndarray, ocr_cfg: dict, original_bgr: np.ndarray) ->
         ) from exc
 
     # Windows: set path to tesseract.exe if not in system PATH
+    import os
     tess_cmd = ocr_cfg.get("tesseract_cmd")
     if tess_cmd:
         pytesseract.pytesseract.tesseract_cmd = tess_cmd
+        logger.debug("Tesseract path from config: %s", tess_cmd)
     elif not _tesseract_in_path():
         # Common Windows default install location
-        import os
         default = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
         if os.path.exists(default):
             pytesseract.pytesseract.tesseract_cmd = default
             logger.debug("Tesseract auto-detected at: %s", default)
+        else:
+            raise RuntimeError(
+                "Tesseract not found. Set 'ocr.tesseract_cmd' in config.json to the full path "
+                r"of tesseract.exe, e.g.: C:\Program Files\Tesseract-OCR\tesseract.exe"
+            )
 
     lang = ocr_cfg.get("tesseract_lang", "deu+eng")
     tess_cfg = ocr_cfg.get("tesseract_config", "--psm 11")

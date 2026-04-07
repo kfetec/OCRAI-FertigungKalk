@@ -34,7 +34,8 @@
     "tesseract_lang": "deu+eng",
     "tesseract_config": "--psm 11",
     "contrast_alpha": 1.5,
-    "contrast_beta": 20
+    "contrast_beta": 20,
+    "tesseract_cmd": "C:\\Program Files\\Tesseract-OCR\\tesseract.exe"
   },
 
   "scale_detection": {
