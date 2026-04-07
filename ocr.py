@@ -115,6 +115,18 @@ def _run_tesseract(gray: np.ndarray, ocr_cfg: dict, original_bgr: np.ndarray) ->
             "pytesseract is required for raster OCR. Install via: pip install pytesseract"
         ) from exc
 
+    # Windows: set path to tesseract.exe if not in system PATH
+    tess_cmd = ocr_cfg.get("tesseract_cmd")
+    if tess_cmd:
+        pytesseract.pytesseract.tesseract_cmd = tess_cmd
+    elif not _tesseract_in_path():
+        # Common Windows default install location
+        import os
+        default = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+        if os.path.exists(default):
+            pytesseract.pytesseract.tesseract_cmd = default
+            logger.debug("Tesseract auto-detected at: %s", default)
+
     lang = ocr_cfg.get("tesseract_lang", "deu+eng")
     tess_cfg = ocr_cfg.get("tesseract_config", "--psm 11")
 
@@ -187,3 +199,8 @@ def _dedup(lst: list[str]) -> list[str]:
             seen.add(key)
             out.append(item)
     return out
+
+
+def _tesseract_in_path() -> bool:
+    import shutil
+    return shutil.which("tesseract") is not None
